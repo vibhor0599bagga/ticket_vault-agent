@@ -1,9 +1,10 @@
 from langgraph.graph import StateGraph, START, END
-from langchain_community.vectorstores import Chroma
+from langchain_chroma import Chroma
 from langchain_ollama import OllamaLLM, OllamaEmbeddings
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.chat_message_histories import ChatMessageHistory
 from typing import TypedDict
+from typing import List
 
 # Define state schema
 class AgentState(TypedDict):
@@ -12,6 +13,7 @@ class AgentState(TypedDict):
     answer: str
     is_event_related: bool
     regenerate: bool
+    attempts: int
 
 # Load vector database
 embeddings = OllamaEmbeddings(model="nomic-embed-text")
@@ -20,9 +22,10 @@ vectorstore = Chroma(persist_directory="./event_vectors", embedding_function=emb
 # Initialize Conversation Memory using ChatMessageHistory
 chat_history = ChatMessageHistory()
 
-# Define LLM
-# llm = OllamaLLM(model="mistral")
+# Define LLMs
 llm = OllamaLLM(model="mistral", temperature=0.2)
+# Separate LLM for follow-up detection with slightly higher temperature for better classification
+llm_followup = OllamaLLM(model="mistral", temperature=0.3)
 
 
 prompt = ChatPromptTemplate.from_template("""
@@ -42,25 +45,54 @@ Respond with clear bullet points showing event name, date, location, and price.
 Respond to the question in concise manner and be specific to the question asked.
 """)
 
+# ---------- Follow-up detector (use history only when needed) ----------
+def is_followup(query: str) -> bool:
+    """
+    Returns True if the new user message depends on prior turns
+    (e.g., 'what about cheaper ones?', 'and the venue?', 'those tickets'), else False.
+    """
+    msgs = chat_history.messages[-6:]  # last ~3 exchanges
+    if not msgs:
+        return False
+    convo = []
+    for m in msgs:
+        role = "User" if m.type == "human" else "Bot"
+        convo.append(f"{role}: {m.content}")
+    history_text = "\n".join(convo)
+    prompt = f"""
+Decide if the NEW user message depends on the previous conversation (is a follow-up),
+or if it starts a new, independent topic.
+
+Previous conversation:
+{history_text}
+
+New message: "{query}"
+
+Reply with ONLY YES or NO.
+"""
+    # Use separate LLM instance for follow-up detection
+    out = llm_followup.invoke(prompt).strip().upper()
+    return out == "YES"
+
 # --- LangGraph Nodes ---
 
 def retrieve(state):
     query = state["query"]
+    # Initialize attempts counter if missing
+    if state.get("attempts") is None:
+        state["attempts"] = 0
     
-    # Get conversation history from ChatMessageHistory
-    messages = chat_history.messages
-    
-    # Build context-aware classification prompt
+    # Use history only if this is a follow-up
     history_context = ""
-    if messages:
-        # Format chat history for context - take last 6 messages (3 exchanges)
-        history_messages = []
-        for msg in messages[-6:]:
-            role = "User" if msg.type == "human" else "Bot"
-            history_messages.append(f"{role}: {msg.content}")
-        if history_messages:
-            history_context = f"\nPrevious conversation:\n" + "\n".join(history_messages) + "\n"
-    
+    if is_followup(query):
+        msgs = chat_history.messages[-6:]
+        if msgs:
+            history_lines = []
+            for msg in msgs:
+                role = "User" if msg.type == "human" else "Bot"
+                history_lines.append(f"{role}: {msg.content}")
+            history_context = f"\nPrevious conversation:\n" + "\n".join(history_lines) + "\n"
+ 
     # Step 1: Use LLM to check if query is event-related
     classification_prompt = f"""
 You are a query classifier for an event ticketing platform called TicketVault.
@@ -84,12 +116,11 @@ Examples:
     # If not event-related, skip retrieval
     if classification == "NO":
         state["retrieved_docs"] = []
-        state["filtered_docs"] = []
         state["is_event_related"] = False
         return state
     
-    # Otherwise, proceed with retrieval
-    state["retrieved_docs"] = vectorstore.similarity_search(query, k=5)
+    # Otherwise, proceed with retrieval (keep it tight)
+    state["retrieved_docs"] = vectorstore.similarity_search(query, k=3)
     state["is_event_related"] = True
     return state
 
@@ -109,15 +140,16 @@ def generate(state):
         state["answer"] = "No matching events found. Please try a different search term or check back later for new events."
         return state
     
-    # Build conversation context
+    # Build conversation context (only if this is a follow-up)
     history_context = ""
-    if messages:
-        history_messages = []
-        for msg in messages[-6:]:  # Last 3 exchanges
-            role = "User" if msg.type == "human" else "Bot"
-            history_messages.append(f"{role}: {msg.content}")
-        if history_messages:
-            history_context = "Previous conversation:\n" + "\n".join(history_messages) + "\n\n"
+    if is_followup(state["query"]):
+        msgs = chat_history.messages[-6:]
+        if msgs:
+            lines = []
+            for msg in msgs:
+                role = "User" if msg.type == "human" else "Bot"
+                lines.append(f"{role}: {msg.content}")
+            history_context = "Previous conversation:\n" + "\n".join(lines) + "\n\n"
     
     context = "\n\n".join([doc.page_content for doc in docs])
     
@@ -151,22 +183,72 @@ Be conversational and helpful. Reference previous context when relevant.
     return state
 
 def self_refine(state):
+    # Cap regeneration attempts to prevent infinite loops
+    max_attempts = 2
+    if state.get("attempts", 0) >= max_attempts:
+        state["regenerate"] = False
+        # Provide a safe fallback if we still don't have a grounded answer
+        if not state.get("answer"):
+            state["answer"] = "I don't have enough event data to answer that. Please try a different query."
+        return state
+
+    # If out-of-scope or no context, keep the safe answer and stop here
+    if not state.get("is_event_related", True):
+        state["regenerate"] = False
+        return state
+
+    docs = state.get("retrieved_docs", [])
+    if not docs:
+        state["regenerate"] = False
+        return state
+
     initial_answer = state["answer"]
+
+    # First, attempt a light refinement
     refine_prompt = f"""
-You are an expert assistant. Refine the following answer for clarity, conciseness, and accuracy. 
-If the answer is already clear and correct, you may keep it as is.
-If the answer is incomplete, unclear, or not relevant to the user's query, respond ONLY with: REGENERATE
+You are an expert editor. Refine the following answer for clarity, conciseness, and correctness.
+Do not add new facts that are not already present in the answer.
+If the answer is incomplete, unclear, or likely not answering the user's question, respond ONLY with: REGENERATE
 
 Answer to refine:
 {initial_answer}
 """
-    refined = llm.invoke(refine_prompt)
-    if refined.strip() == "REGENERATE":
-        # Mark for regeneration by setting a flag in state
+    refined = llm.invoke(refine_prompt).strip()
+
+    # If the refiner explicitly asked to regenerate, set the flag and return
+    if refined == "REGENERATE":
+        state["attempts"] = state.get("attempts", 0) + 1
         state["regenerate"] = True
         return state
+
+    # Groundedness judge: verify the refined answer is supported by the retrieved context
+    context = "\n\n".join([d.page_content for d in docs]) if docs else ""
+
+    judge_prompt = f"""
+You are a strict verifier. Determine if the proposed answer is FULLY supported by the provided context for the given user query.
+If ANY part of the answer is not explicitly supported by the context, respond ONLY with: REGENERATE
+Otherwise, respond ONLY with: OK
+
+User query:
+{state['query']}
+
+Context:
+{context}
+
+Proposed answer:
+{refined}
+"""
+    verdict = llm.invoke(judge_prompt).strip().upper()
+
+    if verdict == "OK":
+        state["answer"] = refined
+        state["regenerate"] = False
+        return state
+
+    # Not grounded -> trigger regeneration cycle
     state["answer"] = refined
-    state["regenerate"] = False
+    state["attempts"] = state.get("attempts", 0) + 1
+    state["regenerate"] = True
     return state
 
 def should_regenerate(state):
@@ -198,6 +280,11 @@ if __name__ == "__main__":
         if query.lower() in ["exit", "quit"]:
             print("👋 Goodbye!")
             break
+        if query.lower() in ["reset", "clear", "new topic"]:
+            # Clear memory to avoid leakage across topics
+            chat_history = ChatMessageHistory()
+            print("🔁 Conversation history cleared.")
+            continue
         
         result = chatbot.invoke({"query": query})
         
@@ -207,3 +294,6 @@ if __name__ == "__main__":
         # Save to ChatMessageHistory
         chat_history.add_user_message(query)
         chat_history.add_ai_message(answer)
+        # Reset attempts between user turns
+        if "attempts" in result:
+            result["attempts"] = 0

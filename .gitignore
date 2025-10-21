@@ -1,6 +1,8 @@
 # Python virtual environments
 venv/
 .env/
+.env.local/
+.venv/
 Lib/
 Include/
 Scripts/
@@ -17,3 +19,4 @@ __pycache__/
 .DS_Store
 .vscode/
 .idea/
+
