@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-from langchain_ollama import OllamaEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 load_dotenv()
 
@@ -38,7 +38,9 @@ def load_data():
             }
         ))
 
-    embeddings = OllamaEmbeddings(model="nomic-embed-text")
+    embeddings = HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-mpnet-base-v2"  # 768-dimensional embeddings
+    )
     vectorstore = Chroma.from_documents(
         docs,
         embedding=embeddings,

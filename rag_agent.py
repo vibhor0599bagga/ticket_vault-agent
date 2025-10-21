@@ -1,6 +1,6 @@
 from langgraph.graph import StateGraph, START, END
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.chat_message_histories import ChatMessageHistory, FileChatMessageHistory
@@ -26,7 +26,9 @@ class AgentState(TypedDict):
     attempts: int
 
 # Load vector database
-embeddings = OllamaEmbeddings(model="nomic-embed-text")
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-mpnet-base-v2"  # 768-dimensional embeddings
+)
 vectorstore = Chroma(persist_directory="./event_vectors", embedding_function=embeddings)
 
 # Initialize Conversation Memory using ChatMessageHistory
