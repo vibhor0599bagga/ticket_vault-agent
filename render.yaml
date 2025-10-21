@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: ticketvault-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    plan: free
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false
+      - key: MONGO_URI
+        sync: false
+      - key: DB_NAME
+        value: ticketvault
+      - key: COLLECTION_NAME
+        value: events
