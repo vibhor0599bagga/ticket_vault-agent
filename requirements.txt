@@ -6,3 +6,4 @@ python-dotenv
 langchain-community
 ollama
 langchain-ollama
+langchain-chroma
