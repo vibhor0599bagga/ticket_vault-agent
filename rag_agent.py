@@ -4,6 +4,11 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.chat_message_histories import ChatMessageHistory, FileChatMessageHistory
+import logging
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 from typing import TypedDict
 from typing import List
 import os
