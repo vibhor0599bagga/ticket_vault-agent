@@ -7,3 +7,4 @@ langchain-community
 ollama
 langchain-ollama
 langchain-chroma
+langchain_groq

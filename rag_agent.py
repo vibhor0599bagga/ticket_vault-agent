@@ -1,10 +1,15 @@
 from langgraph.graph import StateGraph, START, END
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaLLM, OllamaEmbeddings
+from langchain_ollama import OllamaEmbeddings
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory, FileChatMessageHistory
 from typing import TypedDict
 from typing import List
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Define state schema
 class AgentState(TypedDict):
@@ -22,10 +27,19 @@ vectorstore = Chroma(persist_directory="./event_vectors", embedding_function=emb
 # Initialize Conversation Memory using ChatMessageHistory
 chat_history = ChatMessageHistory()
 
-# Define LLMs
-llm = OllamaLLM(model="mistral", temperature=0.2)
-# Separate LLM for follow-up detection with slightly higher temperature for better classification
-llm_followup = OllamaLLM(model="mistral", temperature=0.3)
+# Define LLMs using Groq (much faster and hostable)
+llm = ChatGroq(
+    model="llama-3.1-8b-instant",  # Fast and efficient
+    temperature=0.2,
+    api_key=os.getenv("GROQ_API_KEY")
+)
+
+# Separate LLM for follow-up detection with slightly higher temperature
+llm_followup = ChatGroq(
+    model="llama-3.1-8b-instant",
+    temperature=0.3,
+    api_key=os.getenv("GROQ_API_KEY")
+)
 
 
 prompt = ChatPromptTemplate.from_template("""
@@ -71,7 +85,8 @@ New message: "{query}"
 Reply with ONLY YES or NO.
 """
     # Use separate LLM instance for follow-up detection
-    out = llm_followup.invoke(prompt).strip().upper()
+    response = llm_followup.invoke(prompt)
+    out = response.content.strip().upper()
     return out == "YES"
 
 # --- LangGraph Nodes ---
@@ -111,7 +126,9 @@ Examples:
 - "I want to buy avengers ticket" -> YES
 """
     
-    classification = llm.invoke(classification_prompt).strip().upper()
+    # Extract content from AIMessage object returned by Groq
+    response = llm.invoke(classification_prompt)
+    classification = response.content.strip().upper()
     
     # If not event-related, skip retrieval
     if classification == "NO":
@@ -179,7 +196,8 @@ Be conversational and helpful. Reference previous context when relevant.
         query=state["query"], 
         context=context
     )
-    state["answer"] = llm.invoke(prompt_text)
+    response = llm.invoke(prompt_text)
+    state["answer"] = response.content
     return state
 
 def self_refine(state):
@@ -213,7 +231,8 @@ If the answer is incomplete, unclear, or likely not answering the user's questio
 Answer to refine:
 {initial_answer}
 """
-    refined = llm.invoke(refine_prompt).strip()
+    response = llm.invoke(refine_prompt)
+    refined = response.content.strip()
 
     # If the refiner explicitly asked to regenerate, set the flag and return
     if refined == "REGENERATE":
@@ -238,7 +257,8 @@ Context:
 Proposed answer:
 {refined}
 """
-    verdict = llm.invoke(judge_prompt).strip().upper()
+    response = llm.invoke(judge_prompt)
+    verdict = response.content.strip().upper()
 
     if verdict == "OK":
         state["answer"] = refined
@@ -282,7 +302,7 @@ if __name__ == "__main__":
             break
         if query.lower() in ["reset", "clear", "new topic"]:
             # Clear memory to avoid leakage across topics
-            chat_history = ChatMessageHistory()
+            chat_history.clear()
             print("🔁 Conversation history cleared.")
             continue
         
