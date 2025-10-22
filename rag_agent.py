@@ -1,18 +1,13 @@
 from langgraph.graph import StateGraph, START, END
 from langchain_chroma import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_cohere import CohereEmbeddings  # Replace OpenAIEmbeddings with this
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_community.chat_message_histories import ChatMessageHistory, FileChatMessageHistory
-import logging
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-from typing import TypedDict
-from typing import List
+from langchain_community.chat_message_histories import ChatMessageHistory
 import os
 from dotenv import load_dotenv
+from typing import TypedDict
+from typing import List
 
 load_dotenv()
 
@@ -26,8 +21,9 @@ class AgentState(TypedDict):
     attempts: int
 
 # Load vector database
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-mpnet-base-v2"  # 768-dimensional embeddings
+embeddings = CohereEmbeddings(
+    model="embed-english-v3.0",
+    cohere_api_key=os.getenv("COHERE_API_KEY")
 )
 vectorstore = Chroma(persist_directory="./event_vectors", embedding_function=embeddings)
 

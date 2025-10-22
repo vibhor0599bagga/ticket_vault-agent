@@ -4,11 +4,10 @@ chromadb
 pymongo
 python-dotenv
 langchain-community
-ollama
-langchain-ollama
 langchain-chroma
-langchain_groq
+langchain-groq
 fastapi
 uvicorn
-langchain-huggingface
-sentence-transformers
+langchain-openai
+openai
+langchain-cohere

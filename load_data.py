@@ -3,7 +3,8 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 from langchain_core.documents import Document
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+# Replace OpenAI with Cohere
+from langchain_cohere import CohereEmbeddings
 
 load_dotenv()
 
@@ -38,9 +39,12 @@ def load_data():
             }
         ))
 
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-mpnet-base-v2"  # 768-dimensional embeddings
+    # Use Cohere embeddings instead of OpenAI
+    embeddings = CohereEmbeddings(
+        model="embed-english-v3.0",
+        cohere_api_key=os.getenv("COHERE_API_KEY")
     )
+    
     vectorstore = Chroma.from_documents(
         docs,
         embedding=embeddings,
