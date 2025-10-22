@@ -2,7 +2,7 @@ services:
   - type: web
     name: ticketvault-api
     env: python
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install --no-deps -r requirements-lock.txt && pip install -r requirements.txt
     startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
     plan: free
     envVars:
@@ -10,7 +10,15 @@ services:
         sync: false
       - key: MONGO_URI
         sync: false
+      - key: COHERE_API_KEY # Added this for Cohere embeddings
+        sync: false
       - key: DB_NAME
         value: ticketvault
       - key: COLLECTION_NAME
         value: events
+    autoDeploy: true # Automatically deploy on push to main branch
+    healthCheckPath: /api/health # Use your health check endpoint
+    buildFilter: # Only rebuild when these files change
+      paths:
+        - "*.py"
+        - "requirements*.txt"
