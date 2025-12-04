@@ -147,7 +147,7 @@ async def reset_session(request: Dict[str, str]):
 @app.get("/api/health")
 async def health_check():
     """Health check endpoint"""
-    return {"status": "healthy", "model": llm.model}
+    return {"status": "healthy", "model": llm.model_name}
 
 # Run the API server
 if __name__ == "__main__":
