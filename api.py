@@ -66,6 +66,15 @@ async def process_query(request: QueryRequest, background_tasks: BackgroundTasks
     # Add explicit check for new sessions (first message)
     is_first_message = len(session_history.messages) == 0
     logger.info(f"Processing request for session {session_id}, history length: {len(session_history.messages)}")
+    logger.info(f"Query: {request.query}")
+    
+    # Check environment variables and database status
+    try:
+        from rag_agent import vectorstore
+        vector_count = vectorstore._collection.count()
+        logger.info(f"Vector DB count: {vector_count}")
+    except Exception as e:
+        logger.error(f"Vector DB check failed: {e}")
     
     try:
         # Ensure complete isolation with deep copy of messages
@@ -148,6 +157,68 @@ async def reset_session(request: Dict[str, str]):
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "model": llm.model_name}
+
+@app.get("/api/debug")
+async def debug_info():
+    """Debug endpoint to check configuration and database status"""
+    try:
+        from rag_agent import vectorstore
+        
+        # Check Vector DB
+        vector_count = vectorstore._collection.count()
+        
+        # Try to import MongoDB if available
+        try:
+            from load_data import MongoClient
+            client = MongoClient(os.getenv("MONGO_URI"))
+            db = client[os.getenv("DB_NAME", "ticket_vault")]
+            collection = db[os.getenv("COLLECTION_NAME", "events")]
+            
+            # Test MongoDB connection
+            client.admin.command('ping')
+            mongo_count = collection.count_documents({})
+            
+            # Get a sample event
+            sample_event = collection.find_one()
+            mongo_connected = True
+            mongo_error = None
+        except Exception as mongo_e:
+            mongo_connected = False
+            mongo_count = 0
+            sample_event = None
+            mongo_error = str(mongo_e)
+        
+        return {
+            "status": "ok",
+            "vector_db": {
+                "count": vector_count,
+                "persist_directory": "./event_vectors"
+            },
+            "mongodb": {
+                "connected": mongo_connected,
+                "count": mongo_count,
+                "has_sample": sample_event is not None,
+                "error": mongo_error
+            },
+            "environment": {
+                "groq_api_configured": bool(os.getenv("GROQ_API_KEY")),
+                "cohere_api_configured": bool(os.getenv("COHERE_API_KEY")),
+                "mongo_uri_configured": bool(os.getenv("MONGO_URI")),
+                "db_name": os.getenv("DB_NAME", "ticket_vault"),
+                "collection_name": os.getenv("COLLECTION_NAME", "events")
+            }
+        }
+    except Exception as e:
+        logger.error(f"Debug endpoint error: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "environment": {
+                "groq_api_configured": bool(os.getenv("GROQ_API_KEY")),
+                "cohere_api_configured": bool(os.getenv("COHERE_API_KEY")),
+                "mongo_uri_configured": bool(os.getenv("MONGO_URI"))
+            }
+        }
 
 # Run the API server
 if __name__ == "__main__":

@@ -4,12 +4,18 @@ from langchain_cohere import CohereEmbeddings  # Replace OpenAIEmbeddings with t
 from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.chat_message_histories import ChatMessageHistory
+from langchain_core.documents import Document
 import os
 from dotenv import load_dotenv
 from typing import TypedDict
 from typing import List
+import logging
 
 load_dotenv()
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Define state schema
 class AgentState(TypedDict):
@@ -26,6 +32,78 @@ embeddings = CohereEmbeddings(
     cohere_api_key=os.getenv("COHERE_API_KEY")
 )
 vectorstore = Chroma(persist_directory="./event_vectors", embedding_function=embeddings)
+
+# Check if vector DB is empty and rebuild if necessary
+try:
+    vector_count = vectorstore._collection.count()
+    logger.info(f"Vector DB initialized with {vector_count} vectors")
+    
+    # If vector DB is empty, try to rebuild from MongoDB
+    if vector_count == 0:
+        logger.warning("⚠️ Vector DB is empty! Attempting to rebuild from MongoDB...")
+        
+        try:
+            from pymongo import MongoClient
+            
+            # Connect to MongoDB
+            mongo_uri = os.getenv("MONGO_URI")
+            db_name = os.getenv("DB_NAME", "ticket_vault")
+            collection_name = os.getenv("COLLECTION_NAME", "events")
+            
+            if not mongo_uri:
+                logger.error("❌ MONGO_URI not configured. Cannot rebuild vector DB.")
+            else:
+                client = MongoClient(mongo_uri)
+                db = client[db_name]
+                collection = db[collection_name]
+                
+                # Test connection
+                client.admin.command('ping')
+                logger.info(f"✅ MongoDB connected successfully")
+                
+                # Fetch all events
+                all_events = list(collection.find())
+                logger.info(f"📊 Found {len(all_events)} events in MongoDB")
+                
+                if all_events:
+                    # Create documents for vector DB
+                    docs = []
+                    for event in all_events:
+                        content = (
+                            f"Event: {event.get('title', 'N/A')}\n"
+                            f"Location: {event.get('location', 'N/A')}\n"
+                            f"Venue: {event.get('venue', 'N/A')}\n"
+                            f"Date: {event.get('date', 'N/A')}\n"
+                            f"Time: {event.get('time', 'N/A')}\n"
+                            f"Price: ${event.get('price', 'N/A')}\n"
+                            f"Category: {event.get('category', 'N/A')}\n"
+                            f"Rating: {event.get('rating', 'N/A')}\n"
+                            f"Description: {event.get('description', 'N/A')}\n"
+                            f"Available Tickets: {event.get('availableTickets', 'N/A')}"
+                        )
+                        docs.append(Document(
+                            page_content=content,
+                            metadata={
+                                "price": event.get("price"),
+                                "location": event.get("location"),
+                                "venue": event.get("venue"),
+                                "category": event.get("category"),
+                                "date": event.get("date"),
+                                "rating": event.get("rating")
+                            }
+                        ))
+                    
+                    # Add to vector store
+                    vectorstore.add_documents(docs)
+                    logger.info(f"✅ Successfully rebuilt vector DB with {len(docs)} events")
+                else:
+                    logger.error("❌ No events found in MongoDB to rebuild vector DB!")
+                    
+        except Exception as rebuild_error:
+            logger.error(f"❌ Failed to rebuild vector DB from MongoDB: {rebuild_error}")
+            
+except Exception as e:
+    logger.error(f"❌ Error checking/rebuilding vector DB: {e}")
 
 # Initialize Conversation Memory using ChatMessageHistory
 chat_history = ChatMessageHistory()
