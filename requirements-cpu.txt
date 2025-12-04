@@ -1,14 +1,14 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.7.1+cpu
-fastapi==0.100.0
-uvicorn==0.23.2
-pymongo==4.5.0
-python-dotenv==1.0.0
-langchain-chroma==0.2.6
-langchain-groq==0.3.8
-langchain-cohere==0.4.6
-langchain==0.3.27
-langchain-community==0.3.31
-langchain-core==0.3.79
-langgraph==1.0.0
-chromadb==0.4.18
+torch
+fastapi
+uvicorn
+pymongo
+python-dotenv
+langchain-chroma
+langchain-groq
+langchain-cohere
+langchain
+langchain-community
+langchain-core
+langgraph
+chromadb
